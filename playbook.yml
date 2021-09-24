@@ -1,0 +1,140 @@
+-
+    name: 'Setup Phishing Server'
+    hosts: phishing_server
+    vars: 
+            - vmail_db_bind_passwd: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - vmail_db_admin_passwd: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - api_auth_token: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - netdata_db_password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - mysql_root_password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - amavisd_db_password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - ired_db_passwd: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - rcm_db_passwd: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - sogo_db_passwd: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - sogo_password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - iredapd_db_password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+            - fail2ban_password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+    tasks:
+        -
+          name: 'Set a hostname'
+          ansible.builtin.hostname:
+            name: mx.{{ le_domain }}
+        - 
+          name: 'Update /etc/hosts'
+          lineinfile:
+            dest: /etc/hosts
+            regexp: '.*127.0.0.1$'
+            line: "127.0.0.1 {{le_domain}} mx.{{le_domain}}"
+            state: present
+        
+        -  
+          name: 'Install Nginx'
+          yum:
+              name: nginx
+              state: present
+        -
+          name: 'Stop Nginx'
+          service: 
+            name: nginx
+            state: stopped
+        
+        - 
+          name: 'Install Certbot #1'
+          yum:
+            name: epel-release
+            state: present
+
+        - 
+          name: 'Install Certbot #2'
+          yum: 
+            name: certbot
+            state: present
+          
+        - 
+          name: 'Getting a certificate'
+          command: 'certbot certonly --authenticator standalone --agree-tos --email {{le_email}} --expand -n -q -d {{le_domain}}'
+          ignore_errors: yes
+
+        - 
+          name: "Download iRedMail"
+          get_url:
+            url: https://github.com/iredmail/iRedMail/archive/1.4.2.tar.gz
+            dest: "/root/1.4.2.tar.gz"
+            checksum: sha256:8826409cb3cd92e17742087210de10be681431a3dec379f729d19c88675f4576
+
+        - 
+          name: "Unzipping iRedMail"
+          unarchive:
+            remote_src: true
+            src: '/root/1.4.2.tar.gz'
+            dest: '/root'
+        - 
+          name: "Creating iRedMail config"
+          template: 
+            src: "templates/iRedMail.j2"
+            dest: "/root/iRedMail-1.4.2/config"
+
+        - 
+          name: "Installing iRedMail"
+          shell: |
+                AUTO_USE_EXISTING_CONFIG_FILE=y \
+                AUTO_INSTALL_WITHOUT_CONFIRM=y \
+                AUTO_CLEANUP_REMOVE_SENDMAIL=y \
+                AUTO_CLEANUP_REPLACE_FIREWALL_RULES=y \
+                AUTO_CLEANUP_RESTART_FIREWALL=y \
+                AUTO_CLEANUP_REPLACE_MYSQL_CONFIG=y \
+                bash /root/iRedMail-1.4.2/iRedMail.sh
+        - 
+          name: "Start Nginx"
+          service:
+            name: nginx
+            state: started
+
+        - 
+          name: 'Start iRedAdmin'
+          service:
+            name: iredadmin
+            state: started
+        - 
+          name: 'Creating /root/gophish'
+          file:
+            path: /root/gophish
+            state: directory
+
+        - 
+          name: 'Download Gophish'
+          get_url:
+            url: 'https://github.com/gophish/gophish/releases/download/v0.11.0/gophish-v0.11.0-linux-64bit.zip'
+            dest: '/root/gophish/gophish.zip'
+            checksum: sha256:f33ac7695850132c04d190f83ef54732421a8d4578be1475d3a819fe6173c462
+          
+        - 
+          name: 'Setup Gophish'
+          unarchive:
+            remote_src: true
+            src: /root/gophish/gophish.zip
+            dest: /root/gophish
+        
+        - 
+          name: 'Configuring Gophish'
+          template: 
+            src: "templates/gophish.j2"
+            dest: "/root/gophish/config.json"
+        
+        - name: 'Setting up easy start for Gophish'
+          copy:
+            dest: "/root/gophish/start.sh"
+            content: |
+              bash -c /root/gophish/gophish -c /root/gophish/config.json
+
+        - 
+          name: 'Just wrapping up'
+          file: 
+            dest: '/root/gophish/gophish'
+            mode: a+x
+        
+        - 
+          name: 'Just wrapping up #2'
+          file: 
+            dest: '/root/gophish/start.sh'
+            mode: a+x
